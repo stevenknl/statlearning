@@ -1,0 +1,1096 @@
+---
+pdf_document: default
+author: "Steve Liao"
+date: "2023-12-07"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+title: "Final Project"
+toc: yes
+number_sections: yes
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# Import necessary libraries
+library(ggplot2)
+library(corrplot)
+library(RColorBrewer)
+library(glmnet)
+library(broom)
+library(caret)
+library(class)
+library(dplyr)
+library(rpart)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+library(tidyr)
+library(reshape2)
+library(splines)
+```
+\newpage 
+\tableofcontents 
+\listoffigures 
+\listoftables 
+\newpage
+
+## Abstract
+This project provides an in-depth analysis aiming to predict customer churn for a credit card company, leveraging a dataset containing 10,127 entries across 23 columns. Churn, a crucial concern leading to lost revenue and decreased loyalty, is investigated through various statistical learning techniques. The primary focus is on developing a predictive model for identifying potential churn, while a secondary goal is to understand associative patterns between customer attributes and their churn likelihood. The methodologies employed include k-Nearest Neighbors (KNN), decision tree-based methods (single tree, bagged forest, and random forest), and logistic regression, each providing unique insights into churn prediction. Key findings indicate that certain customer behaviors, demographic factors, and financial attributes significantly impact churn likelihood. 
+
+## Section 1. Introduction
+This research aims to develop a predictive model that can identify customers more likely to attrite, or churn, from their credit card services, and to understand the traits characterizing such customers. Churn is a critical issue for credit card companies, leading to lost revenue and diminished customer loyalty. It encompasses customers canceling or not renewing their accounts, not using their cards for extended periods, or switching to other card issuers. Understanding the reasons behind these behaviors is crucial for predicting and preventing churn, whether due to poor customer service, lack of rewards, high interest rates, or unawareness of product offerings. 
+The primary goal of this analysis is predictive, focusing on accurately forecasting customer churn, while the secondary goal is associative, seeking to provide high interpretability of the model to understand the association between customer traits and their likelihood of churning.
+The "BankChurners.csv" dataset, comprising 10,127 entries and 23 columns, offers an extensive overview of customer attributes relevant to credit card churn. Our response variable is "Attrition_Flag", which signifies whether a customer has churned. 
+
+The features within this dataset can be categorized into three distinct groups:
+1. Demographic Information: This includes data points like "Customer_Age," "Gender," "Education_Level," "Marital_Status," and "Income_Category," providing insights into the background of the customers.
+
+2. Customer-Business Relationship: Several features document the customer's engagement with the bank, such as "Months_on_book," which denotes the duration of the customer's relationship with the bank, and "Total_Relationship_Count," indicating the total number of products a customer holds with the bank. Additionally, 'Months_Inactive_12_mon' and 'Contacts_Count_12_mon' provide information on customer activity levels and their interaction frequency with the bank.
+
+3. Financial Behaviors Related to Credit Card Use: This category captures specifics about the customer's interactions with their credit card, including 'Credit_Limit,' 'Total_Revolving_Bal,' and 'Avg_Open_To_Buy,' which reflect various aspects of credit usage and balances. 'Total_Trans_Amt' and 'Total_Trans_Ct' offer insights into the transactional behavior, while 'Avg_Utilization_Ratio' depicts how much of the available credit is being utilized by the customer.
+This dataset's depth and breadth form a solid foundation for a detailed analysis of the factors that influence credit card churn, addressing both the predictive and associative aspects of customer behavior.
+
+## Section 2. Data Cleaning and EDA
+
+```{r Import & prep data}
+# Import the raw data
+credit.customers <- read.csv("/Users/stevenkliao/Desktop/2023 Fall/STA663/ProjectFinal/BankChurners.csv")
+# Convert to a data frame
+credit.customers <-data.frame(credit.customers)
+# Check number of duplicate rows
+num_duplicates <- sum(duplicated(credit.customers))
+# Check the for na
+null_counts <- colSums(is.na(credit.customers))
+```
+
+Our data has no duplicate rows or NA cells. Note that for some categorical values, such as "Marital_Status", one of the categories is "Unknown." Rather than discarding or implementing imputations, it is in this case preferable to consider "Unknown" as a legitimate category, so that we can avoid introducing bias and potential loss of information, especially we do not know if the data is missing at random. Moreover, in the context of predicting customer churn, the "Unknown" category might itself be indicative of certain customer behaviors or preferences. For instance, customers who choose not to disclose their marital status might have different characteristics or behaviors compared to those who do, and it is important that our model does not make assumptions which may lead to failure to capture such information from the data set.
+
+```{r Get rid of irrelevant columns}
+# Only use columns we care about, drop unnecessary columns, which are the first and the last two columns
+credit.customers <- credit.customers[,c(2:21)]
+```
+
+```{r EDA Age Distribution}
+# Customer Age Distribution with Attrition Status in Reversed Stacked Bars
+ggplot(credit.customers, aes(x = Customer_Age, y = after_stat(count), fill = Attrition_Flag)) +
+  geom_histogram(binwidth = 1, position = position_stack(reverse = TRUE), color = "black") +
+  ggtitle("Figure 2.1: Credit Card Customer Age Distribution with Attrition Status") +
+  xlab("Customer Age") +
+  ylab("Count") +
+  scale_fill_manual(values = c("Attrited Customer" = "red", "Existing Customer" = "blue")) +
+  theme_minimal()
+
+```
+
+```{r Visualization of "Gender" }
+library(ggplot2)
+# Count plot for existing and attrited customers by gender
+ggplot(credit.customers, aes(x = Gender, fill = Attrition_Flag)) +
+  geom_bar(position = "dodge") +
+  ggtitle("Figure 2.2: Existing and Attrited Customers by Gender") +
+  theme_minimal() +
+  labs(x = "Gender", y = "Count")
+
+# Counts for attrited customers by gender
+attrited_counts <- table(credit.customers$Gender[credit.customers$Attrition_Flag == "Attrited Customer"])
+
+# Counts for existing customers by gender
+existing_counts <- table(credit.customers$Gender[credit.customers$Attrition_Flag == "Existing Customer"])
+
+# Pie chart for attrited customers
+pie(attrited_counts, main = "Figure 2.3: Attrited Customer vs Gender", 
+    col = c("blue", "red"), 
+    labels = paste(names(attrited_counts), ":", round(prop.table(attrited_counts) * 100, 1), "%"))
+
+# Pie chart for existing customers
+pie(existing_counts, main = "Figure 2.4: Existing Customer vs Gender", 
+    col = c("blue", "red"), 
+    labels = paste(names(existing_counts), ":", round(prop.table(existing_counts) * 100, 1), "%"))
+
+```
+
+```{r Visualizing Education_Level}
+# Count plot for existing and attrited customers by Education Level
+ggplot(credit.customers, aes(x = Education_Level, fill = Attrition_Flag)) +
+  geom_bar(position = "dodge") +
+  ggtitle("Figure 2.5: Existing and Attrited Customers by Education Level") +
+  theme_minimal() +
+  labs(x = "Education Level", y = "Count")
+
+# Counts for attrited customers by Education_Level
+attrited_counts <- table(credit.customers$Education_Level[credit.customers$Attrition_Flag == "Attrited Customer"])
+
+# Counts for existing customers by Education_Level
+existing_counts <- table(credit.customers$Education_Level[credit.customers$Attrition_Flag == "Existing Customer"])
+
+# Pie chart for attrited customers
+pie(attrited_counts, main = "Figure 2.6: Attrited Customer vs Education Level", 
+    col = c("blue", "red","yellow","green","orange","cyan","grey"), 
+    labels = paste(names(attrited_counts), ":", round(prop.table(attrited_counts) * 100, 1), "%"))
+
+# Pie chart for existing customers
+pie(existing_counts, main = "Figure 2.7: Existing Customer vs Education Level", 
+    col = c("blue", "red","yellow","green","orange","grey","cyan"), 
+    labels = paste(names(existing_counts), ":", round(prop.table(existing_counts) * 100, 1), "%"))
+
+```
+
+```{r Visualziation Marital Status}
+# Count plot for existing and attrited customers by marital status
+ggplot(credit.customers, aes(x = Marital_Status, fill = Attrition_Flag)) +
+  geom_bar(position = "dodge") +
+  ggtitle("Figure 2.8: Existing and Attrited Customers by Marital Status") +
+  theme_minimal() +
+  labs(x = "Marital Status", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+
+# Counts for attrited customers by marital status
+attrited_counts_marital <- table(credit.customers$Marital_Status[credit.customers$Attrition_Flag == "Attrited Customer"])
+
+# Counts for existing customers by marital status
+existing_counts_marital <- table(credit.customers$Marital_Status[credit.customers$Attrition_Flag == "Existing Customer"])
+
+# Pie chart for attrited customers by marital status
+pie(attrited_counts_marital, main = "Figure 2.9: Attrited Customer vs Marital Status", 
+    col = rainbow(length(attrited_counts_marital)), 
+    labels = paste(names(attrited_counts_marital), ":", round(prop.table(attrited_counts_marital) * 100, 1), "%"))
+
+# Pie chart for existing customers by marital status
+pie(existing_counts_marital, main = "Figure 2.10: Existing Customer vs Marital Status", 
+    col = rainbow(length(existing_counts_marital)), 
+    labels = paste(names(existing_counts_marital), ":", round(prop.table(existing_counts_marital) * 100, 1), "%"))
+
+```
+
+```{r Visualize Credit_Limit}
+library(ggplot2)
+# Histogram of Credit_Limit with Attrition Status in Reversed Stacked Bars
+ggplot(credit.customers, aes(x = Credit_Limit, y = after_stat(count), fill = Attrition_Flag)) +
+  geom_histogram(binwidth = 1000, position = position_stack(reverse = TRUE), color = "black") +
+  ggtitle("Figure 2.11: Credit Limit Distribution with Attrition Status") +
+  xlab("Credit Limit") +
+  ylab("Count") +
+  scale_fill_manual(values = c("Attrited Customer" = "red", "Existing Customer" = "blue")) +
+  theme_minimal()
+
+```
+
+```{r Visualize Total_Revolving_Bal}
+ggplot(credit.customers, aes(x = Total_Revolving_Bal, y = after_stat(count), fill = Attrition_Flag)) +
+  geom_histogram(binwidth = 100, position = position_stack(reverse = TRUE), color = "black") +
+  ggtitle("Figure 2.12: Total Revolving Balance Distribution with Attrition Status") +
+  xlab("Total Revolving Balance") +
+  ylab("Count") +
+  scale_fill_manual(values = c("Attrited Customer" = "red", "Existing Customer" = "blue")) +
+  theme_minimal()
+
+```
+```{r Visualize Average Utilization Ratio}
+ggplot(credit.customers, aes(x = Avg_Utilization_Ratio, y = after_stat(count), fill = Attrition_Flag)) +
+  geom_histogram(binwidth = 0.05, position = position_stack(reverse = TRUE), color = "black") +
+  ggtitle("Figure 2.12: Average Utilization Ratio Distribution with Attrition Status") +
+  xlab("Average Utilization Ratio") +
+  ylab("Count") +
+  scale_fill_manual(values = c("Attrited Customer" = "red", "Existing Customer" = "blue")) +
+  theme_minimal()
+
+```
+
+### Correlelogram of numerical features, including Attrition Flag as "0" or "1"
+
+```{r Correlelogram}
+# Convert Attrition Flag into 0 ("Existing Customer") and 1 ("Attrited Customer")
+credit.customers$Attrition_Flag <- ifelse(credit.customers$Attrition_Flag == "Existing Customer", 0, 1)
+# Convert Attrition_Flag for the sake of correlelogram
+credit.customers$Attrition_Flag <- as.numeric(credit.customers$Attrition_Flag)
+# Select only numerical columns for correlation
+columns_to_correlate <- credit.customers[, sapply(credit.customers, is.numeric)]
+# Compute the correlation matrix
+M <- cor(columns_to_correlate, use = "complete.obs")
+# Create the correlogram
+corrplot(M, type = "upper", order = "hclust")
+```
+
+### Data Preparation and Splitting
+The initial step in the model development process involves splitting the dataset into training and testing subsets, with an 80-20 ratio. This split ensures that the model is trained on a substantial portion of the data, while retaining an independent subset for evaluating its performance. All methods are trained on the SAME training set and the SAME test set. Considering that our data set has quite a large number (10127) of rows, splitting the data once in 80-20 ratio is appropriate. Whenever randomness is involved, we set seed for 123 for the entirety of this project.
+
+```{r test-train split}
+# Set the seed for reproducibility
+set.seed(123)  
+# Calculate the size of the training set (80% of the total data)
+train_size <- floor(0.8 * nrow(credit.customers))
+# Randomly sample indices for the training set
+train_indices <- sample(seq(1, nrow(credit.customers)), size = train_size)
+# Create training and testing sets
+train_data <- credit.customers[train_indices, ]
+test_data <- credit.customers[-train_indices, ]
+```
+
+## Section 3. KNN
+### Introduction
+  In this section, we employ the k-Nearest Neighbors (KNN) algorithm, which relies on predicting the response variable on a new row in test data by finding the K rows in our train data whose features are "most similar" to the new row we predict on. KNN is easy to implement and does not have strong assumptions between the response variable (Attrition_Flag) and each feature, and thereby is a more flexible alternative approach to parametric methods (such as logistic regression). Moreover, KNN requires a lot of observations (number of rows) relative to the number of predictors (number of features/columns), which the dimension of our data set satisfies (James et al. 161).
+
+```{r compute_sens}
+compute_sens <- function( truth, predictions, isone){
+  # Determine which rows in the true data have y = 1
+  true1 <- which( truth == isone)
+  # Determine which rows in the predictions have hat y = 1
+  pred1 <- which( predictions == isone)
+  # Find how many agree
+  numerator <- intersect( true1, pred1)
+  # Compute the sensitivity
+  sensitivity <- length(numerator)/length(true1)
+  sensitivity
+}
+```
+
+### Method
+In our approach, the first step involves standardizing all numerical features. This step is crucial because in the k-Nearest Neighbors (KNN) method, the prediction of 'Attrition_Flag' for a test observation is based on identifying the K closest rows in the training data. The scale of the variables significantly impacts these distance calculations. Variables on larger scales disproportionately affect the distances compared to those on smaller scales. For instance, consider features like 'Credit_Limit' and 'Avg_Utilization_Ratio'. For example, let's say our data set contains features 'Credit_Limit' and 'Avg_Utilization_Ratio'; if the ith row represents a customer with a credit limit of $\$$15,000, whose average utilization ratio of his/her credit card is 0.022 (using on average 2.2% of total credit limit), and the jth row represents a customer with a credit limit of $\$$16,000, whose average utilization ratio is 0.922 (using on average 92.2% of total credit limit); a small absolute difference in 'Credit_Limit' of $\$$1,000 might appear more significant than a relatively large proportional difference in 'Avg_Utilization_Ratio' of 0.8 (or 80%). This disparity can skew the KNN results, overemphasizing 'Credit_Limit' while underplaying 'Avg_Utilization_Ratio'. To address this, we standardize the data, giving each variable a mean of zero and a standard deviation of one, thus ensuring all variables contribute equally to the distance calculations.
+
+Given the presence of both categorical and numerical features in our data, we use Gower's Distance as our metric to determine the "most similar" K rows to a given test observation. This choice is appropriate as Gower's Distance can effectively handle the mixed data types, unlike the Euclidean distance which is suitable only for numerical data.
+
+Our selection criterion for the best K value is the highest geometric mean of sensitivity and specificity. Sensitivity, or the true positive rate, measures the proportion of accurately predicted attritions, whereas specificity, or the true negative rate, measures the proportion of non-attritions correctly identified. The geometric mean of these two metrics provides a balanced measure of performance, avoiding models that perform exceptionally well in predicting one category of 'Attrition_Flag' but poorly in the other. For instance, a model with perfect specificity but no sensitivity (failing to identify any attritions) would have a geometric mean of zero, indicating a poor balance. In contrast, a model with slightly lower specificity but some sensitivity would have a higher geometric mean, making it a more suitable choice for our purpose of accurately identifying potential customer churn.
+
+The limitations of KNN model, both evident in its sensitivity and inherent to its non-parametric nature, presents challenges to financial services. It doesn't provide a clear explanation or formula that describes why a certain customer is predicted to churn. This "black box" nature makes it challenging for decision-makers to understand the specific factors leading to a customer's predicted attrition. It also lacks the function to select important features, and therefore has difficulty in providing actionable insights. For instance, if a model could indicate that a high credit utilization ratio is a key predictor of churn, a financial services company could develop specific strategies to engage customers exhibiting this trait. The lack of such insights with KNN makes it difficult to develop focused retention strategies. These limitations will be further clarified in contrast to the following methods, decision tree-based methods and logistic regression. 
+
+### Results
+The value of K that maximizes the balance between sensitivity and specificity is 3. For K = 3, our model indicates to a good balnce between sensitivity and specificity, but that comes from an impressive specificity that it can identify correctly the remaining customer 96.6% of the time. In terms of sensitivity, our model identifies customer churn only 60.82% of the time. While it captures over half of the attrition cases, there is room for improvement in identifying potential churn risks more accurately. The sensitivity of the model suggests that it may not capture all potential attrition scenarios, leading to missed opportunities for intervention before losing a customer.
+
+```{r KNN Scaled}
+set.seed (123)
+# Identify numeric columns excluding 'Attrition_Flag'
+numeric_columns_train <- sapply(train_data, is.numeric) & names(train_data) != "Attrition_Flag"
+numeric_columns_test <- sapply(test_data, is.numeric) & names(test_data) != "Attrition_Flag"
+
+# Scale numeric features (excluding 'Attrition_Flag') and combine with categorical features for training data
+train_data_scaled <- data.frame(
+    scale(train_data[, numeric_columns_train]),  # Scaled numeric features
+    train_data[, !numeric_columns_train]         # Categorical features and 'Attrition_Flag'
+)
+
+# Scale numeric features (excluding 'Attrition_Flag') and combine with categorical features for test data
+test_data_scaled <- data.frame(
+    scale(test_data[, numeric_columns_test]),    # Scaled numeric features
+    test_data[, !numeric_columns_test]           # Categorical features and 'Attrition_Flag'
+)
+
+
+# Create model matrices for KNN
+trainFeatures <- model.matrix(Attrition_Flag ~ ., data = train_data_scaled)[, - 1]
+testFeatures <- model.matrix(Attrition_Flag ~ ., data = test_data_scaled)[, - 1]
+# Define the range of k values to test
+kvalue <- seq(3, 101, by = 2)
+# Prepare vectors to store metrics
+sensitivity <- rep(0, length(kvalue))
+specificity <- rep(0, length(kvalue))
+geo_mean <- rep(0, length(kvalue))
+# Create a data frame to store the results
+data_frame_knn <- data.frame(kvalue = kvalue, sensitivity = sensitivity, 
+                             specificity = specificity, geo_mean = geo_mean)
+
+# Loop through k values to find the best k
+for (i in 1:length(kvalue)) {
+  # Apply KNN model
+  YHat_KNN <- knn(train = trainFeatures, test = testFeatures,
+                  cl = train_data_scaled$Attrition_Flag, k = kvalue[i])
+  sensitivity[i] <- compute_sens(truth = test_data_scaled[, "Attrition_Flag"], 
+                                 predictions = YHat_KNN, 
+                                 isone = "1")
+  specificity[i] <- compute_sens(truth = test_data_scaled[, "Attrition_Flag"], 
+                                 predictions = YHat_KNN, 
+                                 isone = "0")
+  geo_mean[i] <- sqrt(sensitivity[i]*specificity[i])
+}
+
+# Update the data frame with the computed metrics
+data_frame_knn$sensitivity <- sensitivity
+data_frame_knn$specificity <- specificity
+data_frame_knn$geo_mean <- geo_mean
+
+# Find the best k value based on the highest geometric mean
+max_geo_index <- which.max(geo_mean+sensitivity)
+best_knn <- data_frame_knn[max_geo_index, ]
+
+
+# Apply KNN model with the best k value
+best_k <- best_knn$kvalue
+YHat_KNN_best <- knn(train = trainFeatures, test = testFeatures,
+                     cl = train_data_scaled$Attrition_Flag, k = best_k)
+
+# Make confusion matrix
+conf_matrix <- table(Prediction = YHat_KNN_best, Actual = test_data[,"Attrition_Flag"])
+
+# Adding custom labels for rows and columns
+dimnames(conf_matrix) <- list('Prediction' = c('Predicted 0', 'Predicted 1'),
+                              'Actual' = c('True 0', 'True 1'))
+
+# Display the confusion matrix using knitr::kable with a title
+knitr::kable(best_knn, caption = "Table 3.1: Predictive Accuracy: KNN")
+knitr::kable(conf_matrix, caption = "Table 3.2: Confusion Matrix for KNN")
+```
+
+## Section 4. Classification Tree(s)
+### Introduction
+  In this section, we approach our task of predicting customer churn using decision tree(s). Like KNN, it is a nonparametric algorithm as it does assume a shape between response variable and each feature. Its advantages over KNN include that a (single) decision tree can be graphically visualized and can be easily interpreted by laymen. Therefore it can be very easily explained--even easier to explain than logistic regression. 
+  However, decision trees have their downsides. They tend to overfit the training data, meaning they may not perform well on new, unseen data. This is because they can create very complex trees that perfectly explain the training data but fail to generalize to new situations. Moreover, despite the high interpretability of a single decision tree, it suffers from a generally lower predictive accuracy compared to some other classification approaches. We can remedy this by using bagged forest and random forest, the exact methods of bagged forest and random forest are further explained below.
+### Method
+
+#### (Single) Decision Tree
+
+  The process of building a decision tree involves selecting which features to split on and at what thresholds. This is typically done using criteria like Gini impurity which aims to maximize the homogeneity of the nodes – that is, trying to reach a point where each node in the tree contains data points that are as similar as possible in terms of the target variable.
+#### Bagged Forest
+
+  Bagging (Bootstrap Aggregation) involves creating multiple decision trees using bootstrap sampling of the training data and then aggregating their predictions. Bootstrap sampling means you randomly select rows from your original training set, with replacement (putting back the data point after each draw), to create many new "mini" datasets. These datasets are of the same size as your original one, but some data points might be repeated, and some might be left out. 
+  This process reduces the variance of the model leading to improved accuracy. In essence, a bagged forest comprises numerous decision trees, each trained on a slightly different set of data, and their collective decision is used to make the final prediction.
+
+#### Random Forest
+
+  Random forests extend the idea of bagging by introducing another layer of randomness. Not only does each tree in a random forest see a bootstrap sample of the data, but it also considers only a random subset of features for splitting at each node. This additional randomness helps in decorrelating the trees, and as a result our model is less variable and hence more reliable. (James et al. 344)
+  At the level of execution, the main difference is the number of features used while growing the tree. At each split for each tree grown across the forest, all 19 features are considered; only exception is a categorical feature which has already been used up (like the categorical feature 'Gender' that is binary and was already used once in a tree).
+  At each split for each tree grown across the forest, we consider a random sample of 4 (greatest integer less than square root of number of features, which is 19 in this case) features. A different random sample of 4 features is considered for each split at each tree.
+
+### Results
+#### (Single) Decision Tree
+```{r (Single) Decision Tree}
+set.seed (123)
+# Create a tree using all features in the data with default stopping rule
+Tree1 <- rpart(Attrition_Flag ~ ., method ="class", data = train_data, control = rpart.control(cp = 0.01))
+
+# Show a visualization of the tree
+fancyRpartPlot(Tree1, sub = "Plot 4.1: Decision Tree: Attrition")
+
+cm_result <- data.frame (sensitivity = sensitivity, specificity = specificity, balance = geo_mean)
+YHat_Tree <- predict(Tree1, newdata = train_data, type = "class")
+sensitivity <- compute_sens(truth = test_data$Attrition_Flag,
+                              predictions = YHat_Tree, 
+                              isone = "1")
+specificity <- compute_sens(truth = test_data$Attrition_Flag, 
+                              predictions = YHat_Tree, isone = "0")
+geo_mean <- sqrt(sensitivity * specificity)
+cm_result["sensitivity"] <- sensitivity
+cm_result["specificity"] <- specificity
+cm_result["balance"] <- geo_mean
+
+# Apply tree1 model to make predictions
+YHat_Tree <- predict(Tree1, newdata = test_data, type = "class")
+
+# Make confusion matrix
+conf_matrix <- table(Prediction = YHat_Tree, Actual = test_data[,"Attrition_Flag"])
+
+# Adding custom labels for rows and columns
+dimnames(conf_matrix) <- list('Prediction' = c('Predicted 0', 'Predicted 1'),
+                              'Actual' = c('True 0', 'True 1'))
+
+# Display the confusion matrix Results using knitr::kable with a title
+knitr::kable(cm_result, caption = "Table 4.2: Predictive Accuracy: Decision Tree")
+knitr::kable(conf_matrix, caption = "Table 4.3: Confusion Matrix for Decision Tree")
+```
+
+#### Bagged forest
+```{r Bagged forest}
+set.seed(123)
+bagged_forest <- randomForest(as.factor(Attrition_Flag) ~ ., data = train_data, mtry = 19, ntree = 1000, compete = FALSE)
+
+cm_results <- data.frame (sensitivity = sensitivity, specificity = specificity, balance = geo_mean)
+predicted_classes_bf <- predict(bagged_forest, newdata = test_data, type = "response")
+
+sensitivity <- compute_sens(truth = test_data$Attrition_Flag,
+                              predictions = predicted_classes_bf, 
+                              isone = "1")
+specificity <- compute_sens(truth = test_data$Attrition_Flag, 
+                              predictions = predicted_classes_bf, isone = "0")
+geo_mean <- sqrt(sensitivity * specificity)
+cm_results["sensitivity"] <- sensitivity
+cm_results["specificity"] <- specificity
+cm_results["balance"] <- geo_mean
+
+# Apply bagged_forest model to make predictions
+YHat_bagged_forest <- predict(bagged_forest, newdata = test_data, type = "class")
+
+# Compute the confusion matrix
+conf_matrix <- table(Predicted = YHat_bagged_forest, Actual = test_data$Attrition_Flag)
+# Adding custom labels for rows and columns
+dimnames(conf_matrix) <- list('Prediction' = c('Predicted 0', 'Predicted 1'),
+                              'Actual' = c('True 0', 'True 1'))
+
+# Use kable to create a nicely formatted table
+knitr::kable(cm_results, caption = "Table 4.4: Predictive Accuracy: Bagged Forest")
+knitr::kable(conf_matrix, caption = "Table 4.5: Confusion Matrix for Bagged Forest")
+
+```
+
+#### Random Forest
+```{r Random Forest}
+set.seed (123)
+random_forest <- randomForest(as.factor(Attrition_Flag) ~ ., data = train_data, mtry = sqrt(19), ntree = 10000, compete = FALSE)
+
+cm_results <- data.frame (sensitivity = sensitivity, specificity = specificity, balance = geo_mean)
+predicted_classes_rf <- predict(random_forest, newdata = test_data, type = "response")
+
+sensitivity <- compute_sens(truth = test_data$Attrition_Flag,
+                              predictions = predicted_classes_rf, 
+                              isone = "1")
+specificity <- compute_sens(truth = test_data$Attrition_Flag, 
+                              predictions = predicted_classes_rf, isone = "0")
+geo_mean <- sqrt(sensitivity * specificity)
+cm_results["sensitivity"] <- sensitivity
+cm_results["specificity"] <- specificity
+cm_results["balance"] <- geo_mean
+
+# Apply random_forest model to make predictions
+YHat_random_forest <- predict(random_forest, newdata = test_data, type = "class")
+
+# Compute the confusion matrix
+conf_matrix <- table(Predicted = YHat_random_forest, Actual = test_data$Attrition_Flag)
+# Adding custom labels for rows and columns
+dimnames(conf_matrix) <- list('Prediction' = c('Predicted 0', 'Predicted 1'),
+                              'Actual' = c('True 0', 'True 1'))
+
+# Use kable to create a nicely formatted table
+knitr::kable(cm_results, caption = "Table 4.6: Predictive Accuracy: Random Forest")
+knitr::kable(conf_matrix, caption = "Table 4.7: Confusion Matrix for Random Forest")
+```
+
+  Growing one single tree performs abysmally in terms of true positive rate (sensitivity): it only identifies the actual attrited customers only 14.4% of the time. In contrast, bagged forest performs the best in terms of all three metrics we use: it correctly identifies actual customer churn 83.4% of the time with a high balance of 0.90. Random forest performs almost as well: it correctly identifies actual customer churn 80.3% of the time with balance of 0.89. Both bagged forest and random forest have significant improvement of predictive accuracy over KNN.
+  Another upshot of tree-based method is that we can obtain information on which features our models deem most relevant. Therefore, tree-based method can achieve our secondary goal of understanding the associative relationships between customer attributes and their churn behavior, which KNN cannot.
+  Below is a visualization of each tree-based model's different levels of importance for each feature. For all three tree-based methods, top three most importatn features are: 'Total_Trans_Amt','Total_Trans_Ct', and 'Total_Revolving_Bal' (in no particular order). This can be verified by the visualization of 'Tree1' (single tree model) that the top three nodes split at these three features. 
+  
+```{r Tree(s): Feature Importance}
+library(rpart)
+library(randomForest)
+library(ggplot2)
+
+# Extract feature importance for Tree1
+importance_tree <- Tree1$variable.importance
+feature_importance_tree <- data.frame(Feature = names(importance_tree), Importance = importance_tree)
+ggplot(feature_importance_tree, aes(x = reorder(Feature, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Plot 4.8: Feature Importance in Decision Tree", x = "Feature", y = "Relative Importance")
+
+# Extract and plot feature importance for bagged_forest
+importance_bagged <- importance(bagged_forest)[, 'MeanDecreaseGini']
+feature_importance_bagged <- data.frame(Feature = names(importance_bagged), Importance = importance_bagged)
+ggplot(feature_importance_bagged, aes(x = reorder(Feature, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "green") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Plot 4.9: Feature Importance in Bagged Forest", x = "Feature", y = "Relative Importance")
+
+# Extract and plot feature importance for random_forest
+importance_random <- importance(random_forest)[, 'MeanDecreaseGini']
+feature_importance_random <- data.frame(Feature = names(importance_random), Importance = importance_random)
+ggplot(feature_importance_random, aes(x = reorder(Feature, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "red") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Plot 4.10: Feature Importance in Random Forest", x = "Feature", y = "Relative Importance")
+
+```
+
+## Section 5. Method 3 (Logistic Regression)
+### Introduction
+  Logistic Regression is apt for our case as it is one of the most commonly used methods for binary classification problems. As a parametric method, unlike its non-parametric counterparts (such as K-Nearest Neighbor), Logistic Regression not only predicts a binary outcome but also provides the probability of each outcome. This is particularly useful in a business context, where understanding the likelihood of customer churn can guide more nuanced decision-making. Moreover, the coefficient for each features provides a quantifiable way to describe the most salient features in predicting customer churn.
+
+### Method:
+Our methodology involves exploring the relationship between the predicted probability of attrition ("1") and various feature levels. For categorical features, these levels represent different categories, whereas for numerical features, they correspond to discrete intervals across the data range.
+
+In modeling each numerical feature using logistic regression, we examine the log odds plots to assess the nature of their relationships. Often, these relationships are non-linear, necessitating the use of natural splines. We explore degrees of freedom (df) ranging from 1 to 8, selecting the highest df that avoids overfitting and does not impose undue constraints on boundary knots. The optimal df for each feature is determined based on the model's Akaike Information Criterion (AIC), which balances model fit against complexity to prevent overfitting.
+
+Certain numerical features present a dual nature. For instance, integer-valued features like 'Dependent_Count' could be interpreted as categorical. In these scenarios, logistic regression models are constructed treating the feature both as categorical and numerical, and the model with the lower AIC is chosen.
+
+Another example of ambiguous cases is when the log odds plot indicates a data clustering below some threshold and a more parametric pattern above this threshold, e.g., Avg_Open_To_Buy. Given the potential for model overfitting with complex spline models in such instances, it is reasonable to split 'Avg_Open_To_Buy' into two distinct groups: below and above 1400. Similar method is applied to 'Customer_Age'.
+
+Shown below is a table of the treatment of each feature:
+
+\begin{table}[]
+\caption{Logistic Regression by Feature}
+\begin{tabular}{ll}
+Feature                    & Treated as numerical/categorical \\
+Customer\_Age              & Categorical (cut-off at 37.5)    \\
+Gender                     & Categorical (integer-valued)     \\
+Dependent\_count           & Categorical (integer-valued)     \\
+Education\_Level           & Categorical                      \\
+Marital\_Status            & Categorical                      \\
+Income\_Category           & Categorical                      \\
+Card\_Category             & Categorical                      \\
+Months\_on\_book           & Numerical (df = 1)               \\
+Total\_Relationship\_Count & Categorical (integer-valued)     \\
+Months\_Inactive\_12\_mon  & Categorical (integer-valued)     \\
+Contacts\_Count\_12\_mon   & Categorical                      \\
+Credit\_Limit              & Numerical (df = 8)               \\
+Total\_Revolving\_Bal      & Numerical (df = 2)               \\
+Avg\_Open\_To\_Buy         & Categorical (cut-off at 1400)    \\
+Total\_Amt\_Chng\_Q4\_Q1   & Numerical (df = 4)               \\
+Total\_Trans\_Amt          & Numerical (df = 8)               \\
+Total\_Trans\_Ct           & Numerical (df = 3)               \\
+Total\_Ct\_Chng\_Q4\_Q1    & Numerical (df = 6)               \\
+Avg\_Utilization\_Ratio    & Numerical (df = 4)              
+\end{tabular}
+\end{table}
+
+```{r logOddsPlot}
+logOddsPlot <- function(x, y, xname, formulahere){
+  
+  if(class(y) == "factor"){
+    baseline = levels(y)[1]
+    y <- ifelse(y == baseline, 0, 1)
+  }
+  sort = order(x)
+  x = x[sort]
+  y = y[sort]
+  
+  step_size <- 0.05 * length(y)
+  if (step_size <= 0) {
+    stop("Invalid step size for sequence generation.")
+  }
+  a <- seq(1, length(x), by = step_size)
+  b = c(a[-1] - 1, length(x))
+  
+  prob = xmean = ns = rep(0, length(a))
+  for (i in 1:length(a)){
+    range = (a[i]):(b[i])
+    prob[i] = mean(y[range])
+    xmean[i] = mean(x[range])
+  }
+  
+  extreme = (prob == 1 | prob == 0)
+  prob[prob == 0] = .01
+  prob[prob == 1] = .99
+  g = log(prob / (1 - prob))
+  
+  dataHere <- data.frame(x = xmean, LogOdds = g)
+  suppressMessages(library(ggplot2))
+  plot <- ggplot(dataHere, aes(x = xmean, y = LogOdds)) + 
+    geom_point() + 
+    geom_smooth(formula = formulahere, method = "lm", se = FALSE) + 
+    labs(x = xname, y = "Log Odds")
+  
+  plot
+}
+```
+
+The log odds plot for each numerical feature are shown below. For numerical features that are converted to categorical (see table above), the log odds plot shows a linear relation rather than the fitted spline model.
+
+```{r Customer_Age_num}
+df = 1:8
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Customer_Age  , df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Dependent_count <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r Customer_Age_cat}
+# Converting Customer_Age to a categorical variable in both datasets
+# Define the cut-off value
+cut = 37.5
+# Converting Customer_Age to a categorical variable in both datasets
+train_data$Customer_Age_cat <- cut(train_data$Customer_Age, 
+                                   breaks = c(-Inf, cut, Inf), 
+                                   labels = c(paste("<", cut, sep=""), paste(">=", cut, sep="")),
+                                   include.lowest = TRUE)
+test_data$Customer_Age_cat <- cut(test_data$Customer_Age, 
+                                   breaks = c(-Inf, cut, Inf), 
+                                   labels = c(paste("<", cut, sep=""), paste(">=", cut, sep="")),
+                                   include.lowest = TRUE)
+
+# Fit the logistic regression model using the categorical Credit_Limit
+logistic_model_cat <- glm(Attrition_Flag ~ Customer_Age_cat, data = train_data, family = "binomial")
+# Get model AIC
+aic <- logistic_model_cat$aic
+```
+```{r logOddsPlot for Customer_Age }
+# logOddsPlot for Customer_Age 
+logOddsPlot(x=credit.customers$Customer_Age , y=credit.customers$Attrition_Flag, xname = "Customer_Age", formulahere = y ~ ns(x, df = ))
+```
+
+
+```{r Dependent_count_cat}
+# Converting Dependent_count to a categorical variable in both datasets
+train_data$Dependent_count_cat <- as.factor(train_data$Dependent_count)
+test_data$Dependent_count_cat <- as.factor(test_data$Dependent_count)
+
+# Fit the logistic regression model using the Dependent_count_cat
+logistic_model_cat <- glm(Attrition_Flag ~ Dependent_count_cat, data = train_data, family = "binomial")
+# Get model AIC
+aic <- logistic_model_cat$aic
+```
+```{r Dependent_count_num}
+df = 1:8
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Dependent_count , df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Dependent_count <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r logOddsPlot for Dependent_count }
+# logOddsPlot for Dependent_count
+logOddsPlot(x=credit.customers$Dependent_count , y=credit.customers$Attrition_Flag, xname = "Dependent_count", formulahere = y ~ x)
+```
+
+```{r Months_on_book_num}
+df = 1:8
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+# For natural (restricted) cubic splines: df=k−1 if you specify the knots or k=df+1 if you specify the degrees of freedom.
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Months_on_book, df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Months_on_book <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r logOddsPlot for Months_on_book}
+logOddsPlot(x = train_data$Months_on_book, 
+            y = train_data$Attrition_Flag, 
+            xname = "Months_on_book", 
+            formulahere = y ~ ns(x, df = best_df_Months_on_book))
+```
+
+```{r Total_Relationship_Count_num}
+df = 1:5
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Total_Relationship_Count, df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Total_Relationship_Count <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r Total_Relationship_Count_cat}
+# Converting Total_Relationship_Count to a categorical variable in both datasets
+train_data$Total_Relationship_Count_cat <- as.factor(train_data$Total_Relationship_Count)
+test_data$Total_Relationship_Count_cat <- as.factor(test_data$Total_Relationship_Count)
+# Fit the logistic regression model using the Dependent_count_cat
+logistic_model_cat <- glm(Attrition_Flag ~ Total_Relationship_Count_cat, data = train_data, family = "binomial")
+# Get model AIC
+aic <- logistic_model_cat$aic
+```
+```{r logOddsPlot_Total_Relationship_Count}
+# logOddsPlot for Total_Relationship_Count
+logOddsPlot(x=credit.customers$Total_Relationship_Count , y=credit.customers$Attrition_Flag, xname = "Total_Relationship_Count", formulahere = y ~ x)
+```
+
+```{r Months_Inactive_12_mon_num}
+set.seed(100) 
+df = 1:8
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Months_Inactive_12_mon, df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Months_Inactive_12_mon <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r Months_Inactive_12_mon_cat}
+# Converting Months_Inactive_12_mon to a categorical variable in both datasets
+train_data$Months_Inactive_12_mon_cat <- as.factor(train_data$Months_Inactive_12_mon)
+test_data$Months_Inactive_12_mon_cat <- as.factor(test_data$Months_Inactive_12_mon)
+# Fit the logistic regression model using the Dependent_count_cat
+logistic_model_cat <- glm(Attrition_Flag ~ Months_Inactive_12_mon_cat, data = train_data, family = "binomial")
+# Get model AIC
+aic <- logistic_model_cat$aic
+```
+```{r logOddsPlot_Months_Inactive_12_mon}
+# logOddsPlot for Months_Inactive_12_mon
+logOddsPlot(x=credit.customers$Months_Inactive_12_mon , y=credit.customers$Attrition_Flag, xname = "Months_Inactive_12_mon", formulahere = y ~ ns(x, df = ))
+```
+
+
+```{r Contacts_Count_12_mon_num}
+df = 1:8
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Contacts_Count_12_mon, df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+best_aic <- min(aic_results$aic)
+best_df_Contacts_Count_12_mon <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r Contacts_Count_12_mon_cat}
+# Converting Months_Inactive_12_mon to a categorical variable in both datasets
+train_data$Contacts_Count_12_mon_cat <- as.factor(train_data$Contacts_Count_12_mon)
+test_data$Contacts_Count_12_mon_cat <- as.factor(test_data$Contacts_Count_12_mon)
+# Fit the logistic regression model using the Dependent_count_cat
+logistic_model_cat <- glm(Attrition_Flag ~ Contacts_Count_12_mon_cat, data = train_data, family = "binomial")
+# Get model AIC
+aic <- logistic_model_cat$aic
+```
+```{r logOddsPlot_Contacts_Count_12_mon}
+# logOddsPlot for Contacts_Count_12_mon
+logOddsPlot(x=credit.customers$Contacts_Count_12_mon, y=credit.customers$Attrition_Flag, xname = "Months_Inactive_12_mon", formulahere = y ~ ns(x, df = ))
+```
+
+
+```{r Credit_Limit_num}
+df = 1:8
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Credit_Limit, df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Credit_Limit <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r Credit_Limit_cat}
+# Converting Credit_Limit to a categorical variable in both datasets
+# Define the cut-off value
+cut = 5000
+# Converting Customer_Age to a categorical variable in both datasets
+train_data$Credit_Limit_cat <- cut(train_data$Credit_Limit, 
+                                   breaks = c(-Inf, cut, Inf), 
+                                   labels = c(paste("<", cut, sep=""), paste(">=", cut, sep="")),
+                                   include.lowest = TRUE)
+test_data$Credit_Limit_cat <- cut(test_data$Credit_Limit, 
+                                   breaks = c(-Inf, cut, Inf), 
+                                   labels = c(paste("<", cut, sep=""), paste(">=", cut, sep="")),
+                                   include.lowest = TRUE)
+
+# Fit the logistic regression model using the categorical Credit_Limit
+logistic_model_cat <- glm(Attrition_Flag ~ Credit_Limit_cat, data = train_data, family = "binomial")
+# Get model AIC
+aic <- logistic_model_cat$aic
+```
+```{r logOddsPlot_Credit_Limit}
+# logOddsPlot for Credit_Limit
+logOddsPlot(x = credit.customers$Credit_Limit, 
+            y = credit.customers$Attrition_Flag, 
+            xname = "Credit_Limit", 
+            formulahere = y ~ ns(x, df = best_df_Credit_Limit))
+```
+
+
+```{r Total_Revolving_Bal_num}
+df = 1:4
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Total_Revolving_Bal, df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Total_Revolving_Bal <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r Total_Revolving_Bal_cat}
+# Converting Total_Revolving_Bal to a categorical variable in both datasets
+# Define the cut-off value
+
+# Converting Customer_Age to a categorical variable in both datasets
+train_data$Total_Revolving_Bal_cat <- cut(train_data$Total_Revolving_Bal, 
+                                   breaks = c(-Inf, 750, 2250, Inf), 
+                                   labels = c(paste("<750", sep=""), paste("750:2250",sep=""), paste(">2250", sep="")),
+                                   include.lowest = TRUE)
+test_data$Total_Revolving_Bal_cat <- cut(test_data$Total_Revolving_Bal, 
+                                   breaks = c(-Inf, 750, 2250, Inf), 
+                                   labels = c(paste("<750", sep=""), paste("750:2250",sep=""), paste(">2250", sep="")),
+                                   include.lowest = TRUE)
+
+# Fit the logistic regression model using the categorical Credit_Limit
+logistic_model_cat <- glm(Attrition_Flag ~ Total_Revolving_Bal_cat, data = train_data, family = "binomial")
+# Get model AIC
+aic <- logistic_model_cat$aic
+```
+```{r logOddsPlot for Total_Revolving_Bal}
+# logOddsPlot for Total_Revolving_Bal
+logOddsPlot(x = credit.customers$Total_Revolving_Bal, 
+            y = credit.customers$Attrition_Flag, 
+            xname = "Total_Revolving_Bal", 
+            formulahere = y ~ ns(x, df = best_df_Total_Revolving_Bal))
+```
+
+```{r Avg_Open_To_Buy_num}
+df = 1:8
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Avg_Open_To_Buy, df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Avg_Open_To_Buy <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r Avg_Open_To_Buy_cat}
+# Converting Avg_Open_To_Buy to a categorical variable in both datasets
+# Define the cut-off value
+
+# Converting Customer_Age to a categorical variable in both datasets
+train_data$Avg_Open_To_Buy_cat <- cut(train_data$Avg_Open_To_Buy, 
+                                   breaks = c(-Inf, 1200, Inf), 
+                                   labels = c(paste("<1700", sep=""), paste(">=1700", sep="")),
+                                   include.lowest = TRUE)
+test_data$Avg_Open_To_Buy_cat <- cut(test_data$Avg_Open_To_Buy, 
+                                   breaks = c(-Inf, 1200, Inf), 
+                                   labels = c(paste("<1700", sep=""), paste(">=1700", sep="")),
+                                   include.lowest = TRUE)
+
+# Fit the logistic regression model using the categorical Credit_Limit
+logistic_model_cat <- glm(Attrition_Flag ~ Avg_Open_To_Buy_cat, data = train_data, family = "binomial")
+# Get model AIC
+aic <- logistic_model_cat$aic
+```
+```{r logOddsPlot_Avg_Open_To_Buy}
+# logOddsPlot for Avg_Open_To_Buy
+logOddsPlot(x = credit.customers$Avg_Open_To_Buy, 
+            y = credit.customers$Attrition_Flag, 
+            xname = "Avg_Open_To_Buy", 
+            formulahere = y ~ (ns(x, df = )))
+```
+
+```{r Fitting training data for Total_Amt_Chng_Q4_Q1 Using AIC}
+df = 1:2
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Total_Amt_Chng_Q4_Q1, df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Total_Amt_Chng_Q4_Q1 <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r logOddsPlot for Total_Amt_Chng_Q4_Q1}
+# logOddsPlot for Total_Amt_Chng_Q4_Q1
+logOddsPlot(x = credit.customers$Total_Amt_Chng_Q4_Q1, 
+            y = credit.customers$Attrition_Flag, 
+            xname = "Total_Amt_Chng_Q4_Q1", 
+            formulahere = y ~ ns(x, df = best_df_Total_Amt_Chng_Q4_Q1))
+
+```
+
+
+```{r Fitting training data for Total_Trans_Amt Using AIC}
+df = 1:8
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Total_Trans_Amt, df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Total_Trans_Amt <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r logOddsPlot_Total_Trans_Amt}
+# logOddsPlot for Total_Trans_Amt
+logOddsPlot(x = credit.customers$Total_Trans_Amt, 
+            y = credit.customers$Attrition_Flag, 
+            xname = "Total_Trans_Amt", 
+            formulahere = y ~ ns(x, df = best_df_Total_Trans_Amt))
+```
+
+
+```{r Fitting training data for Total_Trans_Ct Using AIC}
+df = 1:4
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Total_Trans_Ct, df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Total_Trans_Ct <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r logOddsPlot_Total_Trans_Ct}
+# logOddsPlot for Total_Trans_Ct
+logOddsPlot(x = credit.customers$Total_Trans_Ct, 
+            y = credit.customers$Attrition_Flag, 
+            xname = "Total_Trans_Ct", 
+            formulahere = y ~ ns(x, df = best_df_Total_Trans_Ct))
+```
+
+```{r Fitting training data for Total_Ct_Chng_Q4_Q1 Using AIC}
+df = 1:10
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Total_Ct_Chng_Q4_Q1, df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Total_Ct_Chng_Q4_Q1<- aic_results$df[which.min(aic_results$aic)]
+```
+```{r logOddsPlot for Total_Ct_Chng_Q4_Q1}
+# logOddsPlot for Total_Ct_Chng_Q4_Q1
+logOddsPlot(x = credit.customers$Total_Ct_Chng_Q4_Q1, 
+            y = credit.customers$Attrition_Flag, 
+            xname = "Total_Ct_Chng_Q4_Q1", 
+            formulahere = y ~ ns(x, df = best_df_Total_Ct_Chng_Q4_Q1))
+```
+
+
+```{r Fitting training data for Avg_Utilization_Ratio Using AIC}
+df = 1:4
+aic_results <- data.frame(df = df, aic = numeric(length(df)))
+
+for (i in df) {
+  logistic_model <- glm(Attrition_Flag ~ ns(Avg_Utilization_Ratio, df = i), data = train_data, family = "binomial")
+  aic_results$df[i]<- i
+  aic_results$aic[i] <- logistic_model$aic
+}
+
+best_aic <- min(aic_results$aic)
+best_df_Avg_Utilization_Ratio <- aic_results$df[which.min(aic_results$aic)]
+```
+```{r logOddsPlot for Avg_Utilization_Ratio}
+# logOddsPlot for Total_Revolving_Bal
+logOddsPlot(x = credit.customers$Avg_Utilization_Ratio, 
+            y = credit.customers$Attrition_Flag, 
+            xname = "Avg_Utilization_Ratio", 
+            formulahere = y ~ ns(x, df = best_df_Avg_Utilization_Ratio))
+```
+
+```{r BIG_logistic_model}
+# Building the logistic regression model
+BIG_logistic_model <- glm(Attrition_Flag ~ 
+                        Gender + 
+                        Education_Level + 
+                        Marital_Status +
+                        Income_Category + 
+                        Card_Category +
+                        Customer_Age_cat +
+                        Dependent_count_cat + 
+                        Months_on_book +
+                        Total_Relationship_Count_cat + 
+                        Months_Inactive_12_mon_cat + 
+                        Contacts_Count_12_mon_cat + 
+                        ns(Credit_Limit, df = best_df_Credit_Limit) + 
+                        ns(Total_Revolving_Bal, df = best_df_Total_Revolving_Bal) + 
+                        Avg_Open_To_Buy_cat +
+                        ns(Total_Amt_Chng_Q4_Q1, df = best_df_Total_Amt_Chng_Q4_Q1) +
+                        ns(Total_Trans_Amt, df = best_df_Total_Trans_Amt) +
+                        ns(Total_Trans_Ct, df = best_df_Total_Trans_Ct) +
+                        ns(Total_Ct_Chng_Q4_Q1, df = best_df_Total_Ct_Chng_Q4_Q1) +
+                        ns(Avg_Utilization_Ratio, df = best_df_Avg_Utilization_Ratio), 
+                      data = train_data, family = "binomial")
+
+```
+
+### Results
+Threshold of 20 gives the highest balance between sensitivity and specificity, that is, we predict 'Attrition_Flag' of a row to be "1" if our logistic model assigns the probability greater than 0.19. With this threshold, our model makes an actual churned customer correctly 93.1% of the time, with the balance between sensitivity and specificity of 0.94.
+```{r BigModel Results}
+# Define a sequence of threshold values to test
+threshold_values <- seq(0.0, 0.99, by = 0.01)
+
+# Initialize a data frame to store the results
+data_frame_logistic <- data.frame(threshold = threshold_values, 
+                                  sensitivity = rep(NA, length(threshold_values)), 
+                                  specificity = rep(NA, length(threshold_values)), 
+                                  geo_mean = rep(NA, length(threshold_values)))
+
+# Make predictions on the test set
+probabilities <- predict(BIG_logistic_model, newdata = test_data, type = "response")
+
+# Loop through threshold values
+for (i in seq_along(threshold_values)) {
+    threshold <- threshold_values[i]
+    YHat_logistic <- ifelse(probabilities > threshold, "1", "0")
+    
+    sensitivity <- compute_sens(truth = test_data$Attrition_Flag, predictions = YHat_logistic, isone = "1")
+    specificity <- compute_sens(truth = test_data$Attrition_Flag, predictions = YHat_logistic, isone = "0")
+    geo_mean <- sqrt(sensitivity * specificity)
+    
+    # Update the data frame with the computed metrics for the current threshold
+    data_frame_logistic[i, "sensitivity"] <- sensitivity
+    data_frame_logistic[i, "specificity"] <- specificity
+    data_frame_logistic[i, "geo_mean"] <- geo_mean
+}
+
+# Find the threshold value that gives the highest geometric mean
+best_threshold <- data_frame_logistic[which.max(data_frame_logistic$geo_mean), ]
+knitr::kable(best_threshold, caption = "Table 5.1: Predictive Accuracy: Logistic Regression")
+```
+
+Our model summary provides a detailed look into which features are most relevant in predicting customer churn (Attrition_Flag); most signicant features are indicated based on the magnitude of their coefficients and their statistical significance (indicated by the number of asterisks in the Pr(>|z|) column). 
+
+```{r coefficients-table, echo=FALSE}
+# Assuming BIG_logistic_model is your logistic regression model
+model_summary <- summary(BIG_logistic_model)
+
+# Extract coefficients and p-values excluding the intercept
+coeffs <- model_summary$coefficients[-1, ]
+
+# Create a significance level column with asterisks
+significance_asterisks <- ifelse(coeffs[, "Pr(>|z|)"] < 0.001, "***", 
+                                 ifelse(coeffs[, "Pr(>|z|)"] < 0.01, "**", 
+                                        ifelse(coeffs[, "Pr(>|z|)"] < 0.05, "*", "")))
+
+# Create a data frame with rounded Estimate and Significance columns
+coeffs_df <- data.frame(Estimate = round(coeffs[, "Estimate"], 3),
+                        Significance = significance_asterisks)
+
+# Use knitr::kable to create a table
+knitr::kable(coeffs_df, caption = "Table 5.2: Logistic Regression Model Coefficients")
+```
+
+From the results from the table above, we can interpret the most significant features based on the magnitude of their coefficients and their statistical significance (indicated by the number of asterisks). Admittedly, the coefficients for ns (Natural Splines) for various features are significant in some cases, yet interpretation of these coefficients is more complex as they capture nonlinear relationships. However, our logistic regression does provided insights into categorical features that non-parametric features do not:
+
+* Contacts_Count_12_mon_cat (Categories 1 to 5): These variables have positive coefficients and are statistically significant (indicated by *** or **). This suggests that as the number of contacts in the last 12 months increases, the likelihood of a customer churning also increases. The high magnitude of coefficients (especially for category 6) indicates a strong effect, but is less statistically significant. 
+* Total_Relationship_Count_cat (Categories 3 to 6): These variables have negative coefficients and are statistically significant. This implies that customers with a higher total relationship count (number of products held) are less likely to churn.
+* Customer_Age_cat>=37.5: This variable is significant and has a positive coefficient, indicating that older customers (above 37.5 years) are more likely to churn.
+* GenderM: The negative coefficient, which is significant, suggests that male customers are less likely to churn compared to female customers.
+* Education_LevelPost-Graduate: This variable is significant and has a positive coefficient, indicating that customers with post-graduate education are slightly more likely to churn.
+
+Despite the high predictive accuray and useful insights provided, the logistic regression requires a painstakingly meticulous in fitting the model to each feature, hence much more complex to implement. 
+
+## Conclusion
+Here is a table of comparing different aspects of each method:
+
+\begin{table}[]
+\begin{tabular}{llllllll}
+Method               & Sensitivity & Specificity & Balance & Parameter        & Predictive Power & Interpretability & Ease of Implementation \\
+KNN                  & 0.61        & 0.97        & 0.77    & K = 3            & Adequate         & Poor             & High                   \\
+Single Decision Tree & 0.14        & 0.86        & 0.35    & NA               & Poor             & High             & High                   \\
+Bagged Forest        & 0.83        & 0.98        & 0.90    & NA               & High             & Adequate         & High                   \\
+Random Forest        & 0.80        & 0.99        & 0.89    & NA               & High             & Adequate         & High                   \\
+Logistic Regression  & 0.93        & 0.94        & 0.94    & threshold = 0.19 & Excellent        & Excellent        & Poor                  
+\end{tabular}
+\caption{Table 6.1: comparison of the methods}
+\label{tab:my-table}
+\end{table}
+
+Through implementing these three (families) of predictive models, we successfully achieved the dual objective of predicting customer churn and identifying key attributes influencing this behavior, yet not for every single model.
+
+The KNN model, while providing a decent balance between sensitivity and specificity, lacked feature importance insights. In contrast, both tree-based methods excelled in both predictive accuracy and offering clarity on significant features. Logistic regression, with its nuanced approach to differentiating between numerical and categorical data, further enriched our understanding of categorical features  most relevant to churn prediction, including information on both customer demography and on relationship with business, which tree-based models failed to highlight. However, if one method must be recommended above all, random forest is likely the most effective and efficient: it is easy to implement, and fares well in our context that many features measuring customers' financial behavior are inherently related in their mathematical definition, such as 'Avg_Open_To_Buy', 'Avg_Utilization_Ratio', 'Credit_Limit', and 'Total_Revolving_Bal'; random forest tend to fare better in such situations; moreover, it is
+
+Our analysis underscores the complexity and challenges of understanding consumer churn behavior in the consumer credit industry. The findings highlight the importance of a multi-pronged strategy that incorporates various customer touchpoints and demographic factors to effectively anticipate and mitigate churn. The models developed provide actionable insights for retail lenders to tailor their customer retention strategies, enhancing loyalty and reducing turnover. While each method has its strengths and limitations, their collective insights present a robust framework for understanding and predicting customer churn in the dynamic landscape of financial services.
+
+## Works Cited
+* Credit Card Customers. Version 1. Retrieved November 3, 2023, from https://www.kaggle.com/datasets/sakshigoyal7/credit-card-customers/data
+* James, Gareth, et al. An Introduction to Statistical Learning with Applications in R. 2nd ed., Springer, 2023.
+
